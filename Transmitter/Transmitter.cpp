@@ -66,43 +66,47 @@ int main() {
 	FD_SET(tcp_socket, &master_set);
 	max_desc = tcp_socket; 
 
+	printf("%d", tcp_socket);
 
 	do {
-		for (int i = 0; i < max_desc; i++) {
-			err = select(max_desc + 1, &master_set, NULL, NULL, &timeout);
-			IsSocketExcept(err);
+		for (int i = 0; i <= max_desc; i++) {
+			if (FD_ISSET(i, &master_set))
+			{
+				err = select(max_desc + 1, &master_set, NULL, NULL, &timeout);
+				IsSocketExcept(err);
 
-			if (i == tcp_socket) {
-				new_desc = accept(tcp_socket, NULL, NULL);
-				FD_SET(new_desc, &master_set);
-				if (max_desc < new_desc)
-					max_desc = new_desc;
-			}
-			else {
-				err = recv(i, buffer, sizeof(buffer), 0);
-				if (err < 0)
-				{
-					if (errno != EWOULDBLOCK)
+				if (i == tcp_socket) {
+					new_desc = accept(tcp_socket, NULL, NULL);
+					FD_SET(new_desc, &master_set);
+					if (max_desc < new_desc)
+						max_desc = new_desc;
+				}
+				else {
+					err = recv(i, buffer, sizeof(buffer), 0);
+					if (err < 0)
 					{
-						perror("  recv() failed");
-						close_conn = TRUE;
+						if (errno != EWOULDBLOCK)
+						{
+							perror("  recv() failed");
+							close_conn = TRUE;
+						}
+						break;
 					}
-					break;
+
+					if (err == 0)
+					{
+						printf("  Connection closed\n");
+						close_conn = TRUE;
+						break;
+					}
+
+					printf("%s", std::string(buffer, sizeof(buffer)).c_str());
+					len = err;
+					printf("  %d bytes received\n", len);
+
 				}
-
-				if (err == 0)
-				{
-					printf("  Connection closed\n");
-					close_conn = TRUE;
-					break;
-				}
-
-				printf("%s", std::string(buffer, sizeof(buffer)).c_str());
-				len = err;
-				printf("  %d bytes received\n", len);
-
+				printf("%d", FD_ISSET(tcp_socket, &master_set));
 			}
-			printf("%d", FD_ISSET(tcp_socket, &master_set));
 		}
 	} while (true);
 }
