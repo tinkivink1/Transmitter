@@ -1,32 +1,32 @@
 #include "Transmitter.h"
 
 
-#define DEFAULT_SOURCE_IP			"127.0.0.1"
-#define DEFAULT_DESTINATION_IP		"127.0.0.1"
-//#define DEFAULT_SOURCE_IP			"192.168.28.110"
-//#define DEFAULT_DESTINATION_IP		"192.168.28.107"
+#define DEFAULT_LOCALHOST_IP		"127.0.0.1"
+#define DEFAULT_STATION_IP			"127.0.0.1"
+#define DEFAULT_SOURCE_IP			"192.168.28.110"	// Стандартный ip 
+#define DEFAULT_DESTINATION_IP		"192.168.28.111"	// ip "Приемника" 
 
-#define DEFAULT_SOURCE_TCP_PORT			52423
-#define DEFAULT_SOURCE_UDP_PORT			55554
-#define DEFAULT_DESTINATION_UDP_PORT	55555
-#define DEFAULT_DESTINATION_TCP_PORT	55552
+#define DEFAULT_LOCALHOST_UDP_PORT		55553	// Порт для приема данных со станции
+#define DEFAULT_LOCALHOST_TCP_PORT		52423	// Переделать
+#define DEFAULT_STATION_UDP_PORT		55552	// Порт станции
+#define DEFAULT_STATION_TCP_PORT		55550   // Порт станции
+
+#define DEFAULT_SOURCE_UDP_PORT			55554	// Порт передатчика
+#define DEFAULT_DESTINATION_UDP_PORT	55555	// Порт приемника
 
 
 int main() {
 	WSADATA wsaData;
-	SOCKET	udp_socket	= INVALID_SOCKET,
-			tcp_socket	= INVALID_SOCKET;
-	u_long	ioMode		= 1; //Socket mode (blocking/non-blocking)
-	fd_set	master_set	= fd_set(),
-			working_set = fd_set();
-	timeval timeout;
-	timeout.tv_sec = 3 * 60;
-	timeout.tv_usec = 0;
-	char	buffer[80];
+	SOCKET	udp_socket			= INVALID_SOCKET, // Сокет для отправки данных на передатчик
+			udp_station_socket	= INVALID_SOCKET, // Сокет для приема данных со станции
+			tcp_socket			= INVALID_SOCKET; // Сокет для отправки сообщений на станцию
+	u_long	ioMode				= 1;			  // Переменная для переключения режима блокировки сокетов
+	fd_set	master_set			= fd_set();       // Набор рабочих дескрипторов сокетов
+	timeval timeout				= {3 * 60, 0};	  // Таймаут приема данных от станции
+
+	char	buffer[65535]; // Буфер для данных
 	
-	int		ready_desc	= 0, 
-			max_desc	= 0, 
-			new_desc	= 0, 
+	int		new_desc	= 0, 
 			end_server	= FALSE, 
 			close_conn	= FALSE,
 			err			= WSAStartup(MAKEWORD(2, 2), &wsaData),
@@ -38,9 +38,11 @@ int main() {
 	}
 
 	try {
-		udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-		tcp_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		udp_socket			= socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		udp_station_socket	= socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		tcp_socket			= socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
+		ioctlsocket(udp_station_socket, FIONBIO, &ioMode);
 		ioctlsocket(udp_socket, FIONBIO, &ioMode);
 		ioctlsocket(tcp_socket, FIONBIO, &ioMode);
 	}
@@ -48,68 +50,79 @@ int main() {
 
 	};
 
-	sockaddr_in udpLocal	= SockAddrInit(DEFAULT_SOURCE_IP, DEFAULT_SOURCE_UDP_PORT);
-	sockaddr_in tcpLocal	= SockAddrInit(DEFAULT_SOURCE_IP, DEFAULT_SOURCE_TCP_PORT);
-	sockaddr_in udpRemote	= SockAddrInit(DEFAULT_DESTINATION_IP, DEFAULT_DESTINATION_UDP_PORT);
-	//sockaddr_in tcpRemote	= SockAddrInit(DEFAULT_DESTINATION_IP, DEFAULT_DESTINATION_TCP_PORT);
-
-
-	err = bind(tcp_socket, (sockaddr*)&tcpLocal, sizeof(tcpLocal));
-	IsSocketExcept(err);
 	
+	sockaddr_in udpLocalhost	= SockAddrInit(DEFAULT_LOCALHOST_IP,	DEFAULT_LOCALHOST_UDP_PORT);	// для приема со станции
+	sockaddr_in tcpLocalhost	= SockAddrInit(DEFAULT_LOCALHOST_IP,	DEFAULT_LOCALHOST_TCP_PORT);	// для отправки на станцию
+	sockaddr_in udpStation		= SockAddrInit(DEFAULT_STATION_IP,		DEFAULT_STATION_UDP_PORT);		// для приема со станции
+	sockaddr_in tcpStation		= SockAddrInit(DEFAULT_STATION_IP,		DEFAULT_STATION_TCP_PORT);		// для отправки на станцию
+	sockaddr_in udpSource		= SockAddrInit(DEFAULT_SOURCE_IP,		DEFAULT_SOURCE_UDP_PORT);		// для отправки на приемник
+	sockaddr_in udpRemote		= SockAddrInit(DEFAULT_DESTINATION_IP,	DEFAULT_DESTINATION_UDP_PORT);	// для отправки на приемник
 
-	/*err = connect(tcp_socket, (sockaddr*)&tcpRemote, sizeof(tcpRemote));
-	IsSocketExcept(err);*/
 
-	err = listen(tcp_socket, 32);
+	err = bind(tcp_socket, (sockaddr*)&tcpLocalhost, sizeof(tcpLocalhost));
 	IsSocketExcept(err);
-	FD_SET(tcp_socket, &master_set);
-	max_desc = tcp_socket; 
+	err = connect(tcp_socket, (sockaddr*)&tcpStation, sizeof(tcpStation));
+	IsSocketExcept(err);
 
-	printf("%d", tcp_socket);
+	err = bind(udp_station_socket, (sockaddr*)&udpLocalhost, sizeof(udpLocalhost));
+	IsSocketExcept(err);
+	err = connect(udp_station_socket, (sockaddr*)&udpStation, sizeof(udpStation));
+	IsSocketExcept(err);
+
+	err = bind(udp_socket, (sockaddr*)&udpSource, sizeof(udpSource));
+	IsSocketExcept(err);
+	err = connect(udp_socket, (sockaddr*)&udpRemote, sizeof(udpRemote));
+	IsSocketExcept(err);
+
+	FD_SET(tcp_socket, &master_set);
+	FD_SET(udp_station_socket, &master_set);
 
 	do {
-		for (int i = 0; i <= max_desc; i++) {
-			if (FD_ISSET(i, &master_set))
-			{
-				err = select(max_desc + 1, &master_set, NULL, NULL, &timeout);
-				IsSocketExcept(err);
+		FD_SET(tcp_socket, &master_set);
+		memset(&buffer, 0, sizeof(buffer));
+		for (int i = 0; i <= master_set.fd_count; i++) {
+			err = select(master_set.fd_count, &master_set, NULL, NULL, &timeout);
+			IsSocketExcept(err);
 
-				if (i == tcp_socket) {
-					new_desc = accept(tcp_socket, NULL, NULL);
+			if (master_set.fd_array[i] == tcp_socket) {
+				new_desc = accept(tcp_socket, NULL, NULL);
+				if(new_desc>0)
 					FD_SET(new_desc, &master_set);
-					if (max_desc < new_desc)
-						max_desc = new_desc;
-				}
-				else {
-					err = recv(i, buffer, sizeof(buffer), 0);
-					if (err < 0)
+			}
+			else {
+				err = recv(master_set.fd_array[i], buffer, sizeof(buffer), 0);
+				if (err < 0)
+				{
+					if (errno != EWOULDBLOCK)
 					{
-						if (errno != EWOULDBLOCK)
-						{
-							perror("  recv() failed");
-							close_conn = TRUE;
-						}
-						break;
-					}
-
-					if (err == 0)
-					{
-						printf("  Connection closed\n");
+						printf("%lu: nothing to receive\n", master_set.fd_array[i]);
 						close_conn = TRUE;
-						break;
+						FD_CLR(master_set.fd_array[i], &master_set);
 					}
-
-					printf("%s", std::string(buffer, sizeof(buffer)).c_str());
-					len = err;
-					printf("  %d bytes received\n", len);
-
+					continue;
 				}
-				printf("%d", FD_ISSET(tcp_socket, &master_set));
+
+				if (err == 0)
+				{
+					printf("%lu: Connection closed\n", master_set.fd_array[i]);
+					close_conn = TRUE;
+					FD_CLR(master_set.fd_array[i], &master_set);
+					continue;
+				}
+
+				printf("%lu: %s", master_set.fd_array[i], std::string(buffer, err).c_str());
+				len = err;
+				printf("\t%d bytes received\n", len);
+
+				err = sendto(udp_socket, buffer, err, NULL, (sockaddr*)&udpRemote, sizeof(udpRemote));
+				printf("\t%d bytes sent\n", err);
+				IsSocketExcept(err);
 			}
 		}
+
 	} while (true);
 }
+
 
 
 void IsSocketExcept(int result) {
