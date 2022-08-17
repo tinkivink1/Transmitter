@@ -30,7 +30,8 @@ int main() {
 			end_server	= FALSE, 
 			close_conn	= FALSE,
 			err			= WSAStartup(MAKEWORD(2, 2), &wsaData),
-			len			= 0;
+			len			= 0,
+			total_received = 0;
 
 	if (err != 0) {
 		printf("WSAStartup failed with error: %d\n", err);
@@ -112,7 +113,8 @@ int main() {
 
 				printf("%lu: %s", master_set.fd_array[i], std::string(buffer, err).c_str());
 				len = err;
-				printf("\t%d bytes received\n", len);
+				total_received += len; 
+				printf("\t%d bytes received\n%d in total", len, total_received);
 
 				err = sendto(udp_socket, buffer, err, NULL, (sockaddr*)&udpRemote, sizeof(udpRemote));
 				printf("\t%d bytes sent\n", err);
