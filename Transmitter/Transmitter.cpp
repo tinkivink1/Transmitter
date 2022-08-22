@@ -7,7 +7,7 @@
 #define DEFAULT_DESTINATION_IP		"192.168.28.111"	// ip "Приемника" 
 
 #define DEFAULT_LOCALHOST_UDP_PORT		55553	// Порт для приема данных со станции
-#define DEFAULT_LOCALHOST_TCP_PORT		55520	// Переделать
+#define DEFAULT_LOCALHOST_TCP_PORT		55510	// Переделать
 #define DEFAULT_STATION_UDP_PORT		55552	// Порт станции
 #define DEFAULT_STATION_TCP_PORT		55551   // Порт станции
 
@@ -27,9 +27,8 @@ int main() {
 	std::thread receiver = std::thread(StationReceiver, std::ref(buffer), std::ref(locker));
 	std::thread transmitter = std::thread(Transmitter, std::ref(buffer), std::ref(locker));
 
-
-	receiver.detach();
 	transmitter.detach();
+	receiver.detach();
 
 
 	char a = 0;
@@ -66,11 +65,11 @@ int Transmitter(std::vector<std::vector<char>>& buffer, std::mutex& locker) {
 			locker.lock();
 			std::copy(buffer[0].begin(), buffer[0].end(), tempBuffer);
 			err = send(udp_socket, tempBuffer, sizeof(tempBuffer), NULL);
-			IsSocketExcept(err);
-			file.write(tempBuffer, sizeof(tempBuffer));
 			buffer.erase(buffer.begin());
 			locker.unlock();
-			Sleep(1000 / 94);
+			file.write(tempBuffer, sizeof(tempBuffer));
+			if (counter++ % 3 == 0)
+				Sleep(1);
 		}
 	} while (true);
 }
@@ -84,7 +83,8 @@ int StationReceiver(std::vector<std::vector<char>>& buffer, std::mutex& locker) 
 				_pause		= 0x04,
 				_end		= 0x05;
 	u_long		ioMode		= 1;
-	char		signal;
+	char		signal,
+				end_signal;
 	bool		is_ended	= false;
 	char tempBuffer[PACKET_SIZE];
 	std::vector<char> tempererBuffer;
@@ -97,11 +97,12 @@ int StationReceiver(std::vector<std::vector<char>>& buffer, std::mutex& locker) 
 	sockaddr_in udpStation = SockAddrInit(DEFAULT_STATION_IP, DEFAULT_STATION_UDP_PORT);		// udp dest
 	sockaddr_in tcpStation = SockAddrInit(DEFAULT_STATION_IP, DEFAULT_STATION_TCP_PORT);		// tcp dest
 
-	err = bind(tcp_socket, (sockaddr*)&tcpLocalhost, sizeof(tcpLocalhost));
-	IsSocketExcept(err);
+
+	/*err = bind(tcp_socket, (sockaddr*)&tcpLocalhost, sizeof(tcpLocalhost));
+	IsSocketExcept(err);*/
 	err = connect(tcp_socket, (sockaddr*)&tcpStation, sizeof(tcpStation));
 	IsSocketExcept(err);
-
+	
 	err = bind(udp_station_socket, (sockaddr*)&udpLocalhost, sizeof(udpLocalhost));
 	IsSocketExcept(err);
 	err = connect(udp_station_socket, (sockaddr*)&udpStation, sizeof(udpStation));
@@ -124,39 +125,34 @@ int StationReceiver(std::vector<std::vector<char>>& buffer, std::mutex& locker) 
 
 	int receivedBytes; 
 
+	auto st_time = clock();
 	do {
-		while (buffer.size() * PACKET_SIZE < FREQ / 4) {
-			locker.lock();
+		if (buffer.size() * PACKET_SIZE < FREQ/4) {
 
 			receivedBytes = err = recv(udp_station_socket, tempBuffer, sizeof(tempBuffer), NULL);
-
 			if (err == -1) {
 				signal = GetBytes(_continue)[0];
 				err = send(tcp_socket, &signal, sizeof(signal), NULL);
 			}
 
 			if (receivedBytes > 0) {
-				std::cout << WSAGetLastError() << std::endl;
-
 				tempererBuffer = std::vector<char>(tempBuffer, tempBuffer + sizeof(tempBuffer));
+				locker.lock();
 				buffer.push_back(tempererBuffer);
-			}
-			locker.unlock();
-
-			if (is_ended && buffer.size() == 0) {
-				closesocket(tcp_socket);
-				closesocket(udp_station_socket);
-				exit(0);
+				locker.unlock();
 			}
 		}
-
-		err = recv(tcp_socket, &signal, 1, NULL);
-
-
 		signal = GetBytes(_pause)[0];
 		err = send(tcp_socket, &signal, sizeof(signal), NULL);
-		//std::cout << "send err: " << err << std::endl;
 
+		err = recv(tcp_socket, &end_signal, 1, NULL);
+		if ((end_signal == (char)_end)) {
+			closesocket(tcp_socket);
+			closesocket(udp_station_socket);
+			auto end_time = clock();
+			std::cout << end_time - st_time << std::endl; 
+			exit(0);
+		}
 	} while (true);
 }
 
